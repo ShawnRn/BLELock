@@ -75,6 +75,8 @@ __pycache__/
 *.svg
 *.png
 !BLELock/Images.xcassets/**/*.png
-!img/*.png
-!img/*.svg
+
+# Excluded folders
+.github/
+img/
 
