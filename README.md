@@ -24,14 +24,14 @@ This document is also available in:
 ## Requirements
 
 - A Mac with Bluetooth Low Energy support.
-- macOS 13.0 (Ventura) or later recommended.
+- macOS 26.0 (Tahoe) or later recommended.
 - iPhone, Apple Watch, or another BLE device that transmits signal periodically.
 
 ## Installation
 
 ### Manual installation
 
-Download the zip file from [Releases](https://github.com/ShawnRn/BLELock/releases), unzip, and move to the Applications folder.
+Download the dmg file from [Releases](https://github.com/ShawnRn/BLELock/releases), and move BLELock.app to the Applications folder.
 
 ## Setting up
 

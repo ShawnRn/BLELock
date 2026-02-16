@@ -31,7 +31,7 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 
 ### 手动安装
 
-从 [Releases](https://github.com/ShawnRn/BLELock/releases) 下载 zip 文件，解压并移动到「应用程序」文件夹。
+从 [Releases](https://github.com/ShawnRn/BLELock/releases) 下载 dmg 文件，移动「BLELock.app」到「应用程序」文件夹。
 
 ## 设置指南
 
