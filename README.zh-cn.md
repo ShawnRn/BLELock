@@ -31,7 +31,7 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 
 ### 手动安装
 
-从 [Releases](https://github.com/ShawnRn/BLEUnlock/releases) 下载 dmg 文件，移动“BLELock.app”到“应用程序”文件夹。
+从 [Releases](https://github.com/ShawnRn/BLEUnlock/releases) 下载 dmg 文件，移动「BLELock.app」到「应用程序」文件夹。
 
 ## 设置指南
 
@@ -53,7 +53,7 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 | 锁定延迟 (Lock Delay) | 检测到设备远离后到执行锁定之前的持续时间。 |
 | 超时 (Timeout) | 最后一次收到信号到执行锁定之间的时间。 |
 | 近距唤醒 (Wake on Proximity) | 当设备靠近时唤醒显示器睡眠（注意：仍需手动输入密码）。 |
-| 暂停“正在播放” | 锁定后暂停音乐或视频播放（Apple Music、Spotify 等）。 |
+| 暂停「正在播放」 | 锁定后暂停音乐或视频播放（Apple Music、Spotify 等）。 |
 | 使用屏幕保护程序 | 启动屏幕保护程序而非立即系统锁定。 |
 | 睡眠显示器 | 锁定后立即关闭显示器。 |
 | 显示 Dock 图标 | 切换应用在 Dock 中的可见性。 |

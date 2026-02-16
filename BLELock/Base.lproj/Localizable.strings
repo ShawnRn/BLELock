@@ -28,7 +28,7 @@
 "passive_mode" = "Passive Mode";
 "password_info" = "Your password will be securely stored in Keychain.";
 "password_not_set" = "Password is not set.";
-"pause_now_playing" = "Pause \"Now Playing\" while Locked";
+"pause_now_playing" = "Pause “Now Playing” while Locked";
 "quit" = "Quit BLELock";
 "scanning" = "Scanning…";
 "seconds" = "seconds";

@@ -42,7 +42,7 @@ On the first launch, it asks for the following permissions:
 | Bluetooth | Required for device scanning and proximity detection. |
 | Notification | BLELock shows a countdown message before locking the screen. |
 
-Finally, from the menu bar icon, select **Device**. Select your device, and you're done!
+Finally, from the menu bar icon, select **Device**. Select your device, and you’re done!
 
 ## Options
 
@@ -53,7 +53,7 @@ Finally, from the menu bar icon, select **Device**. Select your device, and you'
 | Delay to Lock | Duration of time before locking after the device is detected away. |
 | Timeout | Time between last signal reception and locking. |
 | Wake on Proximity | Wakes up the display from sleep when the device approaches (Note: Manual password entry still required). |
-| Pause "Now Playing" | Pauses playback of music or video (Apple Music, Spotify, etc.) upon locking. |
+| Pause “Now Playing” | Pauses playback of music or video (Apple Music, Spotify, etc.) upon locking. |
 | Use Screensaver | Launches screensaver instead of immediate system lock. |
 | Sleep Display | Turns off the display immediately when locking. |
 | Show Dock Icon | Toggles the visibility of the app in the Dock. |
@@ -62,8 +62,8 @@ Finally, from the menu bar icon, select **Device**. Select your device, and you'
 
 ## Troubleshooting
 
-### Can't find my device in the list
-If your device doesn't have a name, it will appear as a UUID. Move your device closer/farther to identify it by RSSI changes.
+### Can’t find my device in the list
+If your device doesn’t have a name, it will appear as a UUID. Move your device closer/farther to identify it by RSSI changes.
 
 ### Frequent “Signal is lost” locking
 Increase the **Timeout** value or try **Passive Mode**.
