@@ -1,0 +1,696 @@
+import Cocoa
+import Quartz
+import ServiceManagement
+import UserNotifications
+import IOKit.pwr_mgt
+import IOKit
+import LocalAuthentication
+
+func t(_ key: String) -> String {
+    return NSLocalizedString(key, comment: "")
+}
+
+@NSApplicationMain
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation, UNUserNotificationCenterDelegate, BLEDelegate {
+    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    let ble = BLE()
+    let mainMenu = NSMenu()
+    let deviceMenu = NSMenu()
+    let lockRSSIMenu = NSMenu()
+    let lockDelayMenu = NSMenu()
+    let timeoutMenu = NSMenu()
+    var deviceDict: [UUID: NSMenuItem] = [:]
+    var monitorMenuItem : NSMenuItem?
+    let prefs = UserDefaults.standard
+    var displaySleep = false
+    var systemSleep = false
+    var connected = false
+    var nowPlayingWasPlaying = false
+    var aboutBox: AboutBox? = nil
+    var inScreensaver = false
+    var lastRSSI: Int? = nil
+    var isDeviceMenuOpen = false
+    var isQuittingValidated = false
+    var isSystemPoweringOff = false
+
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu == deviceMenu {
+            isDeviceMenuOpen = true
+            ble.startScanning()
+        } else if menu == lockRSSIMenu {
+            for item in menu.items {
+                if item.tag == ble.lockRSSI {
+                    item.state = .on
+                } else {
+                    item.state = .off
+                }
+            }
+        } else if menu == timeoutMenu {
+            for item in menu.items {
+                if item.tag == Int(ble.signalTimeout) {
+                    item.state = .on
+                } else {
+                    item.state = .off
+                }
+            }
+        } else if menu == lockDelayMenu {
+            for item in menu.items {
+                if item.tag == Int(ble.proximityTimeout) {
+                    item.state = .on
+                } else {
+                    item.state = .off
+                }
+            }
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        return true
+    }
+    
+    func menuDidClose(_ menu: NSMenu) {
+        if menu == deviceMenu {
+            isDeviceMenuOpen = false
+            ble.stopScanning()
+        }
+    }
+    
+    func menuItemTitle(device: Device) -> String {
+        var desc : String!
+        if let mac = device.macAddr {
+            let prettifiedMac = mac.replacingOccurrences(of: "-", with: ":").uppercased()
+            desc = String(format: "%@ (%@)", device.description, prettifiedMac)
+        } else {
+            desc = device.description
+        }
+        return String(format: "%@ (%ddBm)", desc, device.rssi)
+    }
+    
+    func newDevice(device: Device) {
+        let menuItem = deviceMenu.addItem(withTitle: menuItemTitle(device: device), action:#selector(selectDevice(_:)), keyEquivalent: "")
+        deviceDict[device.uuid] = menuItem
+        if (device.uuid == ble.monitoredUUID) {
+            menuItem.state = .on
+        }
+    }
+    
+    func updateDevice(device: Device) {
+        if let menu = deviceDict[device.uuid] {
+            // Only update title if menu is NOT open to avoid "wrong item" AppKit warnings
+            if !isDeviceMenuOpen {
+                menu.title = menuItemTitle(device: device)
+            }
+        }
+    }
+    
+    func removeDevice(device: Device) {
+        if let menuItem = deviceDict[device.uuid] {
+            menuItem.menu?.removeItem(menuItem)
+        }
+        deviceDict.removeValue(forKey: device.uuid)
+    }
+
+    func updateRSSI(rssi: Int?, active: Bool) {
+        if let r = rssi {
+            lastRSSI = r
+            monitorMenuItem?.title = String(format:"%ddBm", r) + (active ? " (" + t("active") + ")" : "")
+            if (!connected) {
+                connected = true
+                statusItem.button?.image = NSImage(named: "StatusBarConnected")
+            }
+        } else {
+            monitorMenuItem?.title = t("not_detected")
+            if (connected) {
+                connected = false
+                statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
+            }
+        }
+    }
+
+    func bluetoothPowerWarn() {
+        errorModal(t("bluetooth_power_warn"))
+    }
+
+    func notifyUser(_ reason: String) {
+        let content = UNMutableNotificationContent()
+        if reason == "lost" {
+            content.title = t("notification_lost_signal")
+        } else if reason == "away" {
+            content.title = t("notification_device_away")
+        } else {
+            content.title = "BLELock"
+        }
+
+        let computerName = Host.current().localizedName ?? "Mac"
+        content.body = String(format: t("notification_locked"), computerName)
+        
+        let request = UNNotificationRequest(identifier: "lock", content: content, trigger: nil) // Immediate
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    func updateCountdown(seconds: Int, reason: String) {
+        let content = UNMutableNotificationContent()
+        if reason == "lost" {
+            content.title = t("notification_lost_signal")
+        } else if reason == "away" {
+            content.title = t("notification_device_away")
+        } else {
+            content.title = "BLELock"
+        }
+
+        content.body = String(format: t("locking_in_seconds"), seconds)
+        
+        // Use a persistent identifier for countdown so we update the same notification
+        let request = UNNotificationRequest(identifier: "countdown", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    func cancelCountdown(reason: String) {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["countdown"])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Do not play sound for countdown updates to avoid spamming
+        if notification.request.identifier == "countdown" {
+            completionHandler([.banner]) // No sound
+        } else {
+            completionHandler([.banner, .sound])
+        }
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.identifier == "update" {
+            NSWorkspace.shared.open(URL(string: "https://github.com/ShawnRn/BLELock/releases")!)
+        }
+        completionHandler()
+    }
+
+
+    func runScript(_ arg: String) {
+        guard let directory = try? FileManager.default.url(for: .applicationScriptsDirectory, in: .userDomainMask, appropriateFor: nil, create: true) else { return }
+        let file = directory.appendingPathComponent("event")
+        let process = Process()
+        process.executableURL = file
+        if let r = lastRSSI {
+            process.arguments = [arg, String(r)]
+        } else {
+            process.arguments = [arg]
+        }
+        try? process.run()
+    }
+
+    func pauseNowPlaying() {
+        guard prefs.bool(forKey: "pauseItunes") else { return }
+        MRMediaRemoteGetNowPlayingApplicationIsPlaying(
+            DispatchQueue.main,
+            { (playing) in
+                Task { @MainActor in
+                    self.nowPlayingWasPlaying = playing
+                    if self.nowPlayingWasPlaying {
+                        print("pause")
+                        MRMediaRemoteSendCommand(MRCommandPause, nil)
+                    }
+                }
+            }
+        )
+    }
+    
+    func playNowPlaying() {
+        guard prefs.bool(forKey: "pauseItunes") else { return }
+        if nowPlayingWasPlaying {
+            print("play")
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false, block: { _ in
+                Task { @MainActor in
+                    MRMediaRemoteSendCommand(MRCommandPlay, nil)
+                    self.nowPlayingWasPlaying = false
+                }
+            })
+        }
+    }
+
+    func lockOrSaveScreen() {
+        // Clear countdown notification when locking
+        cancelCountdown(reason: "")
+        
+        if prefs.bool(forKey: "screensaver") {
+            if let url = URL(string: "file:///System/Library/CoreServices/ScreenSaverEngine.app") {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            if SACLockScreenImmediate() != 0 {
+                print("Failed to lock screen (likely permission issue). Please use 'screensaver' option as a fallback.")
+            }
+            if prefs.bool(forKey: "sleepDisplay") {
+                print("sleep display")
+                sleepDisplay()
+            }
+        }
+    }
+
+    func updatePresence(presence: Bool, reason: String) {
+        if !presence {
+            if (!isScreenLocked() && ble.lockRSSI != ble.LOCK_DISABLED) {
+                pauseNowPlaying()
+                lockOrSaveScreen()
+                notifyUser(reason)
+                runScript(reason)
+            }
+        }
+    }
+
+    func isScreenLocked() -> Bool {
+        if let dict = CGSessionCopyCurrentDictionary() as? [String : Any] {
+            if let locked = dict["CGSSessionScreenIsLocked"] as? Int {
+                return locked == 1
+            }
+        }
+        return false
+    }
+
+    @objc func onDisplayWake() {
+        print("display wake")
+        displaySleep = false
+    }
+
+    @objc func onDisplaySleep() {
+        print("display sleep")
+        displaySleep = true
+    }
+
+    @objc func onSystemWake() {
+        print("system wake")
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: false, block: { _ in
+            MainActor.assumeIsolated {
+                print("delayed system wake job")
+                if self.prefs.bool(forKey: "showDockIcon") {
+                    NSApp.setActivationPolicy(.regular)
+                } else {
+                    NSApp.setActivationPolicy(.accessory) // Hide Dock icon again
+                }
+                self.systemSleep = false
+            }
+        })
+    }
+    
+    @objc func onSystemSleep() {
+        print("system sleep")
+        systemSleep = true
+        // Set activation policy to regular, so the CBCentralManager can scan for peripherals
+        // when the Bluetooth will become on again.
+        // This enables Dock icon but the screen is off anyway.
+        NSApp.setActivationPolicy(.regular)
+    }
+
+
+    @objc func onScreensaverStart() {
+        print("screensaver start")
+        inScreensaver = true
+    }
+
+    @objc func onScreensaverStop() {
+        print("screensaver stop")
+        inScreensaver = false
+    }
+
+    @objc func selectDevice(_ sender: NSMenuItem) {
+        for (uuid, menuItem) in deviceDict {
+            if menuItem == sender {
+                monitorDevice(uuid: uuid)
+                prefs.set(uuid.uuidString, forKey: "device")
+                menuItem.state = .on
+            } else {
+                menuItem.state = .off
+            }
+        }
+    }
+
+    func monitorDevice(uuid: UUID) {
+        connected = false
+        statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
+        monitorMenuItem?.title = t("not_detected")
+        ble.startMonitor(uuid: uuid)
+    }
+
+    func errorModal(_ msg: String, info: String? = nil) {
+        let alert = NSAlert()
+        alert.messageText = msg
+        alert.informativeText = info ?? ""
+        alert.window.title = "BLELock"
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+    
+    
+    @objc func setRSSIThreshold() {
+        let msg = NSAlert()
+        msg.addButton(withTitle: t("ok"))
+        msg.addButton(withTitle: t("cancel"))
+        msg.messageText = t("enter_rssi_threshold")
+        msg.informativeText = t("enter_rssi_threshold_info")
+        msg.window.title = "BLELock"
+        
+        let txt = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 20))
+        txt.placeholderString = String(ble.thresholdRSSI)
+        msg.accessoryView = txt
+        txt.becomeFirstResponder()
+        NSApp.activate(ignoringOtherApps: true)
+        let response = msg.runModal()
+        
+        if (response == .alertFirstButtonReturn) {
+            let val = txt.intValue
+            ble.thresholdRSSI = Int(val)
+            prefs.set(val, forKey: "thresholdRSSI")
+        }
+    }
+
+    @objc func toggleWakeOnProximity(_ menuItem: NSMenuItem) {
+        let value = !prefs.bool(forKey: "wakeOnProximity")
+        menuItem.state = value ? .on : .off
+        prefs.set(value, forKey: "wakeOnProximity")
+    }
+
+    @objc func setLockRSSI(_ menuItem: NSMenuItem) {
+        let value = menuItem.tag
+        prefs.set(value, forKey: "lockRSSI")
+        ble.lockRSSI = value
+    }
+    
+
+    @objc func setTimeout(_ menuItem: NSMenuItem) {
+        let value = menuItem.tag
+        prefs.set(value, forKey: "timeout")
+        ble.signalTimeout = Double(value)
+    }
+
+    @objc func setLockDelay(_ menuItem: NSMenuItem) {
+        let value = menuItem.tag
+        prefs.set(value, forKey: "lockDelay")
+        ble.proximityTimeout = Double(value)
+    }
+
+    @objc func toggleLaunchAtLogin(_ menuItem: NSMenuItem) {
+        let launchAtLogin = !prefs.bool(forKey: "launchAtLogin")
+        prefs.set(launchAtLogin, forKey: "launchAtLogin")
+        menuItem.state = launchAtLogin ? .on : .off
+        
+        let service = SMAppService.mainApp
+        do {
+            if launchAtLogin {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            print("Failed to update launch at login: \(error)")
+        }
+    }
+
+    @objc func togglePauseNowPlaying(_ menuItem: NSMenuItem) {
+        let pauseNowPlaying = !prefs.bool(forKey: "pauseItunes")
+        prefs.set(pauseNowPlaying, forKey: "pauseItunes")
+        menuItem.state = pauseNowPlaying ? .on : .off
+    }
+    
+    @objc func toggleUseScreensaver(_ menuItem: NSMenuItem) {
+        let value = !prefs.bool(forKey: "screensaver")
+        prefs.set(value, forKey: "screensaver")
+        menuItem.state = value ? .on : .off
+    }
+
+    @objc func toggleSleepDisplay(_ menuItem: NSMenuItem) {
+        let value = !prefs.bool(forKey: "sleepDisplay")
+        prefs.set(value, forKey: "sleepDisplay")
+        menuItem.state = value ? .on : .off
+    }
+    
+    @objc func togglePassiveMode(_ menuItem: NSMenuItem) {
+        let passiveMode = !prefs.bool(forKey: "passiveMode")
+        prefs.set(passiveMode, forKey: "passiveMode")
+        menuItem.state = passiveMode ? .on : .off
+        ble.setPassiveMode(passiveMode)
+    }
+
+
+    @objc func toggleShowDockIcon(_ menuItem: NSMenuItem) {
+        let show = !prefs.bool(forKey: "showDockIcon")
+        prefs.set(show, forKey: "showDockIcon")
+        menuItem.state = show ? .on : .off
+        
+        Task { @MainActor in
+            if show {
+                NSApp.setActivationPolicy(.regular)
+                // Bring to front several times to ensure Dock icon appears
+                NSApp.activate(ignoringOtherApps: true)
+                for i in 0..<3 {
+                    try? await Task.sleep(nanoseconds: 100_000_000 * UInt64(i + 1))
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            } else {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+    }
+
+    @objc func lockNow() {
+        guard !isScreenLocked() else { return }
+        pauseNowPlaying()
+        lockOrSaveScreen()
+    }
+    
+    @objc func showAboutBox() {
+        AboutBox.showAboutBox()
+    }
+
+    @objc func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isQuittingValidated || isSystemPoweringOff {
+            return .terminateNow
+        }
+
+        let context = LAContext()
+        var error: NSError?
+
+        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: t("auth_to_quit")) { success, evaluateError in
+                DispatchQueue.main.async {
+                    if success {
+                        self.isQuittingValidated = true
+                        NSApplication.shared.reply(toApplicationShouldTerminate: true)
+                    } else {
+                        if let error = evaluateError as NSError?, error.code != LAError.userCancel.rawValue {
+                            self.errorModal(t("error"), info: error.localizedDescription)
+                        }
+                        NSApplication.shared.reply(toApplicationShouldTerminate: false)
+                    }
+                }
+            }
+            return .terminateLater
+        } else {
+            // Biometric or password auth not available, just quit
+            return .terminateNow
+        }
+    }
+
+    @objc func onSystemPowerOff() {
+        print("System power off")
+        isSystemPoweringOff = true
+    }
+
+    func constructRSSIMenu(_ menu: NSMenu, _ action: Selector) {
+        menu.addItem(withTitle: t("closer"), action: nil, keyEquivalent: "")
+        for proximity in stride(from: -30, to: -100, by: -5) {
+            let item = menu.addItem(withTitle: String(format: "%ddBm", proximity), action: action, keyEquivalent: "")
+            item.tag = proximity
+        }
+        menu.addItem(withTitle: t("farther"), action: nil, keyEquivalent: "")
+        menu.delegate = self
+    }
+    
+    func constructMenu() {
+        monitorMenuItem = mainMenu.addItem(withTitle: t("device_not_set"), action: nil, keyEquivalent: "")
+        
+        var item: NSMenuItem
+
+        item = mainMenu.addItem(withTitle: t("lock_now"), action: #selector(lockNow), keyEquivalent: "")
+        mainMenu.addItem(NSMenuItem.separator())
+
+        item = mainMenu.addItem(withTitle: t("device"), action: nil, keyEquivalent: "")
+        item.submenu = deviceMenu
+        deviceMenu.delegate = self
+        deviceMenu.addItem(withTitle: t("scanning"), action: nil, keyEquivalent: "")
+
+
+        let lockRSSIItem = mainMenu.addItem(withTitle: t("lock_rssi"), action: nil, keyEquivalent: "")
+        lockRSSIItem.submenu = lockRSSIMenu
+        constructRSSIMenu(lockRSSIMenu, #selector(setLockRSSI))
+        item = lockRSSIMenu.addItem(withTitle: t("disabled"), action: #selector(setLockRSSI), keyEquivalent: "")
+        item.tag = ble.LOCK_DISABLED
+
+        let lockDelayItem = mainMenu.addItem(withTitle: t("lock_delay"), action: nil, keyEquivalent: "")
+        lockDelayItem.submenu = lockDelayMenu
+        lockDelayMenu.addItem(withTitle: "2 " + t("seconds"), action: #selector(setLockDelay), keyEquivalent: "").tag = 2
+        lockDelayMenu.addItem(withTitle: "5 " + t("seconds"), action: #selector(setLockDelay), keyEquivalent: "").tag = 5
+        lockDelayMenu.addItem(withTitle: "15 " + t("seconds"), action: #selector(setLockDelay), keyEquivalent: "").tag = 15
+        lockDelayMenu.addItem(withTitle: "30 " + t("seconds"), action: #selector(setLockDelay), keyEquivalent: "").tag = 30
+        lockDelayMenu.addItem(withTitle: "1 " + t("minute"), action: #selector(setLockDelay), keyEquivalent: "").tag = 60
+        lockDelayMenu.addItem(withTitle: "2 " + t("minutes"), action: #selector(setLockDelay), keyEquivalent: "").tag = 120
+        lockDelayMenu.addItem(withTitle: "5 " + t("minutes"), action: #selector(setLockDelay), keyEquivalent: "").tag = 300
+        lockDelayMenu.delegate = self
+
+        let timeoutItem = mainMenu.addItem(withTitle: t("timeout"), action: nil, keyEquivalent: "")
+        timeoutItem.submenu = timeoutMenu
+        timeoutMenu.addItem(withTitle: "10 " + t("seconds"), action: #selector(setTimeout), keyEquivalent: "").tag = 10
+        timeoutMenu.addItem(withTitle: "30 " + t("seconds"), action: #selector(setTimeout), keyEquivalent: "").tag = 30
+        timeoutMenu.addItem(withTitle: "1 " + t("minute"), action: #selector(setTimeout), keyEquivalent: "").tag = 60
+        timeoutMenu.addItem(withTitle: "2 " + t("minutes"), action: #selector(setTimeout), keyEquivalent: "").tag = 120
+        timeoutMenu.addItem(withTitle: "5 " + t("minutes"), action: #selector(setTimeout), keyEquivalent: "").tag = 300
+        timeoutMenu.addItem(withTitle: "10 " + t("minutes"), action: #selector(setTimeout), keyEquivalent: "").tag = 600
+        timeoutMenu.delegate = self
+
+        item = mainMenu.addItem(withTitle: t("wake_on_proximity"), action: #selector(toggleWakeOnProximity), keyEquivalent: "")
+        if prefs.bool(forKey: "wakeOnProximity") {
+            item.state = .on
+        }
+
+
+        item = mainMenu.addItem(withTitle: t("pause_now_playing"), action: #selector(togglePauseNowPlaying), keyEquivalent: "")
+        if prefs.bool(forKey: "pauseItunes") {
+            item.state = .on
+        }
+
+        item = mainMenu.addItem(withTitle: t("use_screensaver_to_lock"), action: #selector(toggleUseScreensaver), keyEquivalent: "")
+        if prefs.bool(forKey: "screensaver") {
+            item.state = .on
+        }
+
+        item = mainMenu.addItem(withTitle: t("sleep_display"), action: #selector(toggleSleepDisplay), keyEquivalent: "")
+        if prefs.bool(forKey: "sleepDisplay") {
+            item.state = .on
+        }
+        
+
+        item = mainMenu.addItem(withTitle: t("passive_mode"), action: #selector(togglePassiveMode), keyEquivalent: "")
+        item.state = prefs.bool(forKey: "passiveMode") ? .on : .off
+        
+        item = mainMenu.addItem(withTitle: t("launch_at_login"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        item.state = prefs.bool(forKey: "launchAtLogin") ? .on : .off
+        
+        item = mainMenu.addItem(withTitle: t("show_dock_icon"), action: #selector(toggleShowDockIcon), keyEquivalent: "")
+        item.state = prefs.bool(forKey: "showDockIcon") ? .on : .off
+
+        mainMenu.addItem(withTitle: t("set_rssi_threshold"), action: #selector(setRSSIThreshold),
+                         keyEquivalent: "")
+
+        mainMenu.addItem(NSMenuItem.separator())
+        mainMenu.addItem(withTitle: t("about"), action: #selector(showAboutBox), keyEquivalent: "")
+        mainMenu.addItem(NSMenuItem.separator())
+        mainMenu.addItem(withTitle: t("quit"), action: #selector(quitApp), keyEquivalent: "q")
+        statusItem.menu = mainMenu
+    }
+
+
+    func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // Enforce single instance: kill other instances of BLELock or BLEUnlock
+        let runningApps = NSWorkspace.shared.runningApplications
+        let currentApp = NSRunningApplication.current
+        for app in runningApps {
+            if app != currentApp {
+                if app.bundleIdentifier == "com.shawnrain.BLELock" || 
+                   app.bundleIdentifier == "com.shawnrain.BLEUnlock" {
+                    print("Terminating existing instance: \(app.bundleIdentifier ?? "unknown")")
+                    app.terminate()
+                }
+            }
+        }
+
+        if let button = statusItem.button {
+            button.image = NSImage(named: "StatusBarDisconnected")
+            constructMenu()
+        }
+        ble.delegate = self
+        if let str = prefs.string(forKey: "device") {
+            if let uuid = UUID(uuidString: str) {
+                monitorDevice(uuid: uuid)
+            }
+        }
+        let lockRSSI = prefs.integer(forKey: "lockRSSI")
+        if lockRSSI != 0 {
+            ble.lockRSSI = lockRSSI
+        }
+        if prefs.object(forKey: "timeout") != nil {
+            ble.signalTimeout = Double(prefs.integer(forKey: "timeout"))
+        }
+        ble.setPassiveMode(prefs.bool(forKey: "passiveMode"))
+        let thresholdRSSI = prefs.integer(forKey: "thresholdRSSI")
+        if thresholdRSSI != 0 {
+            ble.thresholdRSSI = thresholdRSSI
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(onSystemPowerOff), 
+                                                          name: NSWorkspace.willPowerOffNotification, object: nil)
+
+        let lockDelay = prefs.integer(forKey: "lockDelay")
+        if lockDelay != 0 {
+            ble.proximityTimeout = Double(lockDelay)
+        }
+
+        UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                print("Notification permission error: \(error)")
+            }
+        }
+
+        let nc = NSWorkspace.shared.notificationCenter;
+        nc.addObserver(self, selector: #selector(onDisplaySleep), name: NSWorkspace.screensDidSleepNotification, object: nil)
+        nc.addObserver(self, selector: #selector(onDisplayWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        nc.addObserver(self, selector: #selector(onSystemSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        nc.addObserver(self, selector: #selector(onSystemWake), name: NSWorkspace.didWakeNotification, object: nil)
+
+        let dnc = DistributedNotificationCenter.default
+        dnc.addObserver(self, selector: #selector(onScreensaverStart), name: NSNotification.Name(rawValue: "com.apple.screensaver.didstart"), object: nil)
+        dnc.addObserver(self, selector: #selector(onScreensaverStop), name: NSNotification.Name(rawValue: "com.apple.screensaver.didstop"), object: nil)
+
+        checkUpdate()
+
+        // Hide dock icon.
+        // This is required because we can't have LSUIElement set to true in Info.plist,
+        // otherwise CBCentralManager.scanForPeripherals won't work.
+        if prefs.bool(forKey: "showDockIcon") {
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+    
+    func applicationWillTerminate(_ aNotification: Notification) {
+    }
+}
+
+@_silgen_name("SACLockScreenImmediate")
+func SACLockScreenImmediate() -> Int32
+
+/// Wakes the display by declaring user activity.
+@MainActor
+func wakeDisplay() {
+    var assertionID: IOPMAssertionID = 0
+    let result = IOPMAssertionDeclareUserActivity("BLELock" as CFString, kIOPMUserActiveLocal, &assertionID)
+    if result != kIOReturnSuccess {
+        print("Failed to wake display: \(result)")
+    }
+}
+
+/// Sleeps the display by communicating with the IODisplayWrangler.
+@MainActor
+func sleepDisplay() {
+    let reg = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IODisplayWrangler")
+    if reg != 0 {
+        IORegistryEntrySetCFProperty(reg, "IORequestIdle" as CFString, kCFBooleanTrue)
+        IOObjectRelease(reg)
+    } else {
+        print("Failed to get IODisplayWrangler registry entry")
+    }
+}

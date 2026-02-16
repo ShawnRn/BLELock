@@ -4,7 +4,8 @@
 
 ## Build generated
 build/
-DerivedData
+DerivedData/
+*.moved-aside
 
 ## Various settings
 *.pbxuser
@@ -22,6 +23,7 @@ xcuserdata
 *.moved-aside
 *.xcuserstate
 *.xcscmblueprint
+.agent/
 
 ## Obj-C/Swift specific
 *.hmap
@@ -55,3 +57,24 @@ fastlane/screenshots
 .DS_Store
 
 /archives
+
+# Temporary Scripts & Assets
+/scripts/
+/archives/
+/build/
+
+# IDE/System
+.DS_Store
+*.pyc
+__pycache__/
+.history/
+.vscode/
+.idea/
+
+# App Assets
+*.svg
+*.png
+!BLELock/Images.xcassets/**/*.png
+!img/*.png
+!img/*.svg
+
