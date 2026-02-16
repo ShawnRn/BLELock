@@ -24,7 +24,7 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 ## 系统要求
 
 - 支持蓝牙低功耗 (BLE) 的 Mac。
-- 建议 macOS 13.0 (Ventura) 或更高版本。
+- 建议 macOS 26.0 (Tahoe) 或更高版本。
 - 定期传输信号的 iPhone、Apple Watch 或其他 BLE 设备。
 
 ## 安装方法
