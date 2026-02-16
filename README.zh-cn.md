@@ -2,8 +2,8 @@
 
 ## 注意：本应用现在是一个自动锁定工具。出于安全和简化考虑，已移除自动解锁功能。
 
-![CI](https://github.com/ShawnRn/BLELock/workflows/CI/badge.svg)
-![Github All Releases](https://img.shields.io/github/downloads/ShawnRn/BLELock/total.svg)
+![CI](https://github.com/ShawnRn/BLEUnlock/actions/workflows/ci.yml/badge.svg)
+![Github All Releases](https://img.shields.io/github/downloads/ShawnRn/BLEUnlock/total.svg)
 
 BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch 或任何其他蓝牙低功耗 (BLE) 设备的距离来**自动锁定**您的 Mac。
 
@@ -31,7 +31,7 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 
 ### 手动安装
 
-从 [Releases](https://github.com/ShawnRn/BLELock/releases) 下载 dmg 文件，移动“BLELock.app”到“应用程序”文件夹。
+从 [Releases](https://github.com/ShawnRn/BLEUnlock/releases) 下载 dmg 文件，移动“BLELock.app”到“应用程序”文件夹。
 
 ## 设置指南
 

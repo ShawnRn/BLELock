@@ -180,7 +180,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if response.notification.request.identifier == "update" {
-            NSWorkspace.shared.open(URL(string: "https://github.com/ShawnRn/BLELock/releases")!)
+            NSWorkspace.shared.open(URL(string: "https://github.com/ShawnRn/BLEUnlock/releases")!)
         }
         completionHandler()
     }

@@ -2,8 +2,8 @@
 
 ## Note: This app is now an Automatic Locking tool. Auto-Unlock has been removed for security and simplicity.
 
-![CI](https://github.com/ShawnRn/BLELock/workflows/CI/badge.svg)
-![Github All Releases](https://img.shields.io/github/downloads/ShawnRn/BLELock/total.svg)
+![CI](https://github.com/ShawnRn/BLEUnlock/actions/workflows/ci.yml/badge.svg)
+![Github All Releases](https://img.shields.io/github/downloads/ShawnRn/BLEUnlock/total.svg)
 
 BLELock is a small menu bar utility that **automatically locks** your Mac by proximity of your iPhone, Apple Watch, or any other Bluetooth Low Energy device. 
 
@@ -31,7 +31,7 @@ This document is also available in:
 
 ### Manual installation
 
-Download the dmg file from [Releases](https://github.com/ShawnRn/BLELock/releases), and move BLELock.app to the Applications folder.
+Download the dmg file from [Releases](https://github.com/ShawnRn/BLEUnlock/releases), and move BLELock.app to the Applications folder.
 
 ## Setting up
 

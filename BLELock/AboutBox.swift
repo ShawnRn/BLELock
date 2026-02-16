@@ -9,14 +9,14 @@ class AboutBox: NSWindowController, NSWindowDelegate {
 
     @objc(visitHomepage:)
     func visitHomepage(_ sender: Any?) {
-        if let url = URL(string: "https://github.com/ShawnRn/BLELock") {
+        if let url = URL(string: "https://github.com/ShawnRn/BLEUnlock") {
             NSWorkspace.shared.open(url)
         }
     }
     
     @objc(checkReleases:)
     func checkReleases(_ sender: Any?) {
-        if let url = URL(string: "https://github.com/ShawnRn/BLELock/releases") {
+        if let url = URL(string: "https://github.com/ShawnRn/BLEUnlock/releases") {
             NSWorkspace.shared.open(url)
         }
     }
