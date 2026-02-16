@@ -1,0 +1,2 @@
+# Force GitHub to ignore header files in language statistics
+*.h linguist-detectable=false
