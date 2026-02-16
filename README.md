@@ -70,6 +70,6 @@ Increase the **Timeout** value or try **Passive Mode**.
 
 ## Credit & License
 
-Original project by Takeshi Sone. Rebranded and modernized by Shawn Rain.
+Original project by [Takeshi Sone](https://github.com/ts1/BLEUnlock). Rebranded and modernized by Shawn Rain.
 
 MIT License. Copyright © 2026-present Shawn Rain.

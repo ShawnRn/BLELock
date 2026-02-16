@@ -70,6 +70,6 @@ BLELock 是一个轻量级菜单栏工具，它通过检测 iPhone、Apple Watch
 
 ## 致谢与许可
 
-原项目由 Takeshi Sone 开发。由 Shawn Rain 进行品牌重塑和现代化重构。
+原项目由 [Takeshi Sone](https://github.com/ts1/BLEUnlock) 开发。由 Shawn Rain 进行品牌重塑和现代化重构。
 
 MIT 许可证。版权所有 © 2026-present Shawn Rain。
