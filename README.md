@@ -65,7 +65,7 @@ Finally, from the menu bar icon, select **Device**. Select your device, and you'
 ### Can't find my device in the list
 If your device doesn't have a name, it will appear as a UUID. Move your device closer/farther to identify it by RSSI changes.
 
-### Frequent "Signal is lost" locking
+### Frequent “Signal is lost” locking
 Increase the **Timeout** value or try **Passive Mode**.
 
 ## Credit & License
