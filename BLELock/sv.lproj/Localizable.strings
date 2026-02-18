@@ -18,7 +18,7 @@
 "minutes" = "minuter";
 "not_detected" = "Ingen enhet upptäcktes";
 "notification_device_away" = "Enheten är borta";
-"notification_locked" = "%@ har låsts av BLELock";
+"notification_locked" = "\"%@\" har låsts av %@.";
 "notification_lost_signal" = "Signalen är förlorad";
 "notification_update_available" = "En updatering finns tillgänglig.";
 "ok" = "OK";
@@ -32,6 +32,12 @@
 "set_password" = "Ange lösenord…";
 "set_rssi_threshold" = "Ange lägsta RSSI…";
 "sleep_display" = "Stäng av skärmen vid låsning";
+"run_shortcut_on_lock" = "Kör genväg vid lås…";
+"enter_shortcut_name" = "Ange genvägsnamn";
+"select_shortcut_name" = "Välj genväg att köra";
+"enter_shortcut_name_info" = "Den här genvägen körs när BLELock låser din Mac.";
+"shortcut_none" = "Kör inte";
+"shortcut_input_reason" = "Orsak";
 "timeout" = "Ingen-signal tidsgräns";
 "unlock_rssi" = "Upplåsnings RSSI";
 "use_screensaver_to_lock" = "Använd skärmsläckare för att låsa";

@@ -19,12 +19,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     let lockRSSIMenu = NSMenu()
     let lockDelayMenu = NSMenu()
     let timeoutMenu = NSMenu()
+    let shortcutMenu = NSMenu()
     var deviceDict: [UUID: NSMenuItem] = [:]
     var monitorMenuItem : NSMenuItem?
+    var monitorDetailMenu = NSMenu()
     let prefs = UserDefaults.standard
     var displaySleep = false
     var systemSleep = false
     var connected = false
+    var rssiMap: [UUID: Int?] = [:]
+    var deviceNameMap: [UUID: String] = [:]
     var nowPlayingWasPlaying = false
     var aboutBox: AboutBox? = nil
     var inScreensaver = false
@@ -32,6 +36,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     var isDeviceMenuOpen = false
     var isQuittingValidated = false
     var isSystemPoweringOff = false
+    var lastHeaderText: String?
+    var lastHeaderUpdate: TimeInterval = 0
+    var lastDisplayedRSSI: [UUID: Int?] = [:]
+    var shortcutName: String?
 
     func menuWillOpen(_ menu: NSMenu) {
         if menu == deviceMenu {
@@ -61,6 +69,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
                     item.state = .off
                 }
             }
+        } else if menu == shortcutMenu {
+            refreshShortcutMenu()
         }
     }
 
@@ -85,16 +95,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         }
         return String(format: "%@ (%ddBm)", desc, device.rssi)
     }
+
+    func updateMonitorMenuTitle() {
+        if ble.monitoredUUIDs.isEmpty {
+            monitorMenuItem?.attributedTitle = nil
+            monitorMenuItem?.title = t("device_not_set")
+            monitorDetailMenu.removeAllItems()
+        } else {
+            monitorMenuItem?.attributedTitle = nil
+            monitorMenuItem?.title = String(format: t("device_count"), ble.monitoredUUIDs.count)
+        }
+    }
+
+    func updateMonitorDetailList() {
+        monitorDetailMenu.removeAllItems()
+        guard !ble.monitoredUUIDs.isEmpty else { return }
+        for id in ble.monitoredUUIDs {
+            let name = deviceNameMap[id] ?? String(id.uuidString.prefix(8)) + "…"
+            let title: String
+            if let val = rssiMap[id] ?? nil {
+                title = "\(name) \(val)dBm"
+            } else {
+                title = "\(name) --"
+            }
+            monitorDetailMenu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        }
+    }
     
     func newDevice(device: Device) {
         let menuItem = deviceMenu.addItem(withTitle: menuItemTitle(device: device), action:#selector(selectDevice(_:)), keyEquivalent: "")
         deviceDict[device.uuid] = menuItem
-        if (device.uuid == ble.monitoredUUID) {
+        deviceNameMap[device.uuid] = device.description
+        if ble.monitoredUUIDs.contains(device.uuid) {
             menuItem.state = .on
         }
     }
     
     func updateDevice(device: Device) {
+        deviceNameMap[device.uuid] = device.description
         if let menu = deviceDict[device.uuid] {
             // Only update title if menu is NOT open to avoid "wrong item" AppKit warnings
             if !isDeviceMenuOpen {
@@ -108,19 +146,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             menuItem.menu?.removeItem(menuItem)
         }
         deviceDict.removeValue(forKey: device.uuid)
+        // 保留已选设备，即使暂时不在扫描列表里
+        updateMonitorMenuTitle()
     }
 
-    func updateRSSI(rssi: Int?, active: Bool) {
+    func updateRSSI(rssi: Int?, active: Bool, uuid: UUID) {
+        // Debounce: only redraw header when RSSI meaningfully changes
+        let prev = lastDisplayedRSSI[uuid] ?? nil
+        if let old = prev, let new = rssi, abs(old - new) < 2, Date().timeIntervalSince1970 - lastHeaderUpdate < 3 {
+            rssiMap[uuid] = rssi
+        } else {
+            rssiMap[uuid] = rssi
+            lastDisplayedRSSI[uuid] = rssi
+        }
+
+        // Compose status title: show all selected devices' RSSI
+        if ble.monitoredUUIDs.isEmpty {
+            lastHeaderText = nil
+            monitorMenuItem?.attributedTitle = nil
+            monitorMenuItem?.title = t("device_not_set")
+            monitorDetailMenu.removeAllItems()
+        } else {
+            let now = Date().timeIntervalSince1970
+            let header = String(format: t("device_count"), ble.monitoredUUIDs.count)
+            if header != lastHeaderText && (!isDeviceMenuOpen || now - lastHeaderUpdate > 0.8) {
+                lastHeaderText = header
+                lastHeaderUpdate = now
+                monitorMenuItem?.attributedTitle = nil
+                monitorMenuItem?.title = header
+            }
+            updateMonitorDetailList()
+        }
+
         if let r = rssi {
             lastRSSI = r
-            monitorMenuItem?.title = String(format:"%ddBm", r) + (active ? " (" + t("active") + ")" : "")
             if (!connected) {
                 connected = true
                 statusItem.button?.image = NSImage(named: "StatusBarConnected")
             }
         } else {
-            monitorMenuItem?.title = t("not_detected")
-            if (connected) {
+            // if any device unknown, keep connected flag only if at least one rssi exists
+            let anyKnown = rssiMap.values.contains { $0 != nil }
+            if !anyKnown && connected {
                 connected = false
                 statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
             }
@@ -131,7 +198,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         errorModal(t("bluetooth_power_warn"))
     }
 
-    func notifyUser(_ reason: String) {
+    func notifyUser(_ reason: String, deviceName: String? = nil) {
         let content = UNMutableNotificationContent()
         if reason == "lost" {
             content.title = t("notification_lost_signal")
@@ -142,7 +209,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         }
 
         let computerName = Host.current().localizedName ?? "Mac"
-        content.body = String(format: t("notification_locked"), computerName)
+        let device = deviceName ?? t("unknown_device")
+        content.body = String(format: t("notification_locked"), computerName, device)
         
         let request = UNNotificationRequest(identifier: "lock", content: content, trigger: nil) // Immediate
         UNUserNotificationCenter.current().add(request)
@@ -247,13 +315,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         }
     }
 
-    func updatePresence(presence: Bool, reason: String) {
+    func runShortcutIfNeeded(reason: String) {
+        guard let name = shortcutName, !name.isEmpty else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+        process.arguments = ["run", name]
+        let stderr = Pipe()
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            print("Failed to launch shortcuts: \(error)")
+            return
+        }
+        process.terminationHandler = { _ in
+            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8), !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                print("Shortcuts error (\(reason)): \(output)")
+            }
+        }
+    }
+
+    func updatePresence(presence: Bool, reason: String, deviceUUID: UUID?) {
         if !presence {
             if (!isScreenLocked() && ble.lockRSSI != ble.LOCK_DISABLED) {
                 pauseNowPlaying()
                 lockOrSaveScreen()
-                notifyUser(reason)
+                let deviceName = deviceUUID.flatMap { deviceNameMap[$0] } ?? deviceUUID?.uuidString ?? "Unknown Device"
+                notifyUser(reason, deviceName: deviceName)
                 runScript(reason)
+                runShortcutIfNeeded(reason: reason)
             }
         }
     }
@@ -288,6 +379,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
                     NSApp.setActivationPolicy(.accessory) // Hide Dock icon again
                 }
                 self.systemSleep = false
+                self.ble.scanForPeripherals()
             }
         })
     }
@@ -299,6 +391,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         // when the Bluetooth will become on again.
         // This enables Dock icon but the screen is off anyway.
         NSApp.setActivationPolicy(.regular)
+        // Pause scanning to avoid影响休眠
+        ble.stopScanning()
     }
 
 
@@ -315,20 +409,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     @objc func selectDevice(_ sender: NSMenuItem) {
         for (uuid, menuItem) in deviceDict {
             if menuItem == sender {
-                monitorDevice(uuid: uuid)
-                prefs.set(uuid.uuidString, forKey: "device")
-                menuItem.state = .on
-            } else {
-                menuItem.state = .off
+                let nowOn = menuItem.state == .off
+                menuItem.state = nowOn ? .on : .off
+                if nowOn {
+                    ble.monitoredUUIDs.insert(uuid)
+                } else {
+                    ble.monitoredUUIDs.remove(uuid)
+                }
             }
         }
+        persistMonitoredDevices()
+        monitorDevice(uuids: ble.monitoredUUIDs)
+        updateMonitorMenuTitle()
     }
 
-    func monitorDevice(uuid: UUID) {
+    func persistMonitoredDevices() {
+        let ids = ble.monitoredUUIDs.map { $0.uuidString }
+        prefs.set(ids, forKey: "devices")
+    }
+
+    func monitorDevice(uuids: Set<UUID>) {
         connected = false
         statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
         monitorMenuItem?.title = t("not_detected")
-        ble.startMonitor(uuid: uuid)
+        ble.startMonitor(uuids: uuids)
     }
 
     func errorModal(_ msg: String, info: String? = nil) {
@@ -422,6 +526,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         prefs.set(value, forKey: "sleepDisplay")
         menuItem.state = value ? .on : .off
     }
+
+    func loadShortcutList() -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+        process.arguments = ["list"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        var list = text.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        list.insert(t("shortcut_none"), at: 0)
+        return list
+    }
+
+    func refreshShortcutMenu() {
+        shortcutMenu.removeAllItems()
+        let shortcuts = loadShortcutList()
+        for name in shortcuts {
+            let item = shortcutMenu.addItem(withTitle: name, action: #selector(selectShortcut(_:)), keyEquivalent: "")
+            item.target = self
+            let selectedName = shortcutName ?? t("shortcut_none")
+            item.state = (name == selectedName) ? .on : .off
+        }
+    }
+
+    @objc func selectShortcut(_ menuItem: NSMenuItem) {
+        if menuItem.title == t("shortcut_none") {
+            shortcutName = nil
+        } else {
+            shortcutName = menuItem.title
+        }
+        prefs.set(shortcutName, forKey: "shortcutName")
+        refreshShortcutMenu()
+    }
     
     @objc func togglePassiveMode(_ menuItem: NSMenuItem) {
         let passiveMode = !prefs.bool(forKey: "passiveMode")
@@ -455,6 +599,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         guard !isScreenLocked() else { return }
         pauseNowPlaying()
         lockOrSaveScreen()
+        runShortcutIfNeeded(reason: "manual")
     }
     
     @objc func showAboutBox() {
@@ -511,6 +656,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     
     func constructMenu() {
         monitorMenuItem = mainMenu.addItem(withTitle: t("device_not_set"), action: nil, keyEquivalent: "")
+        monitorMenuItem?.submenu = monitorDetailMenu
         
         var item: NSMenuItem
 
@@ -571,6 +717,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             item.state = .on
         }
         
+        item = mainMenu.addItem(withTitle: t("run_shortcut_on_lock"), action: nil, keyEquivalent: "")
+        item.submenu = shortcutMenu
+        shortcutMenu.delegate = self
+        refreshShortcutMenu()
+
 
         item = mainMenu.addItem(withTitle: t("passive_mode"), action: #selector(togglePassiveMode), keyEquivalent: "")
         item.state = prefs.bool(forKey: "passiveMode") ? .on : .off
@@ -611,11 +762,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             constructMenu()
         }
         ble.delegate = self
-        if let str = prefs.string(forKey: "device") {
-            if let uuid = UUID(uuidString: str) {
-                monitorDevice(uuid: uuid)
+        var initialUUIDs: Set<UUID> = []
+        if let arr = prefs.array(forKey: "devices") as? [String] {
+            for s in arr {
+                if let u = UUID(uuidString: s) {
+                    initialUUIDs.insert(u)
+                }
             }
+        } else if let str = prefs.string(forKey: "device"), let uuid = UUID(uuidString: str) {
+            initialUUIDs.insert(uuid)
         }
+        ble.monitoredUUIDs = initialUUIDs
+        updateMonitorMenuTitle()
+        // Start scanning immediately to populate names/RSSI without menu open
+        ble.startScanning()
+        monitorDevice(uuids: initialUUIDs)
+        updateMonitorDetailList()
         let lockRSSI = prefs.integer(forKey: "lockRSSI")
         if lockRSSI != 0 {
             ble.lockRSSI = lockRSSI
@@ -624,6 +786,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             ble.signalTimeout = Double(prefs.integer(forKey: "timeout"))
         }
         ble.setPassiveMode(prefs.bool(forKey: "passiveMode"))
+        if let sc = prefs.string(forKey: "shortcutName") {
+            shortcutName = sc
+        }
         let thresholdRSSI = prefs.integer(forKey: "thresholdRSSI")
         if thresholdRSSI != 0 {
             ble.thresholdRSSI = thresholdRSSI

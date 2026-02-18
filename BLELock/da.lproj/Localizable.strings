@@ -18,7 +18,7 @@
 "minutes" = "minutter";
 "not_detected" = "Signal ikke fundet";
 "notification_device_away" = "Enheden er væk";
-"notification_locked" = "%@ er blevet låst af BLELock";
+"notification_locked" = "\"%@\" er blevet låst af %@.";
 "notification_lost_signal" = "Signalet er tabt";
 "notification_update_available" = "Opdatering er tilgængelig.";
 "ok" = "OK";
@@ -32,6 +32,12 @@
 "set_password" = "Indstil adgangskode…";
 "set_rssi_threshold" = "Indstil mindste RSSI…";
 "sleep_display" = "Slå skærmen fra ved låsning";
+"run_shortcut_on_lock" = "Kør genvej ved lås…";
+"enter_shortcut_name" = "Indtast genvejsnavn";
+"select_shortcut_name" = "Vælg genvej der skal køres";
+"enter_shortcut_name_info" = "Denne genvej køres, når BLELock låser din Mac.";
+"shortcut_none" = "Kør ikke";
+"shortcut_input_reason" = "Årsag";
 "timeout" = "Timeout for manglende signal";
 "unlock_rssi" = "Låse op RSSI";
 "use_screensaver_to_lock" = "Brug screensaver til at låse";

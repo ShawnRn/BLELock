@@ -5,6 +5,7 @@
 "closer" = "⬆Closer";
 "device" = "Device";
 "device_not_set" = "Device not selected";
+"device_count" = "%ld devices selected";
 "disabled" = "Disable";
 "enter_password" = "Enter password to unlock the lock screen.";
 "enter_rssi_threshold" = "Enter Minimum RSSI";
@@ -20,7 +21,7 @@
 "minutes" = "minutes";
 "not_detected" = "Signal not detected";
 "notification_device_away" = "Device is away";
-"notification_locked" = "%@ has been locked by BLELock";
+"notification_locked" = "\"%@\" has been locked by \"%@\".";
 "locking_in_seconds" = "Locking screen in %d seconds";
 "notification_lost_signal" = "Signal is lost";
 "notification_update_available" = "Update is available.";
@@ -35,6 +36,12 @@
 "set_password" = "Set Password…";
 "set_rssi_threshold" = "Set Minimum RSSI…";
 "sleep_display" = "Turn Off Screen on Lock";
+"run_shortcut_on_lock" = "Run Shortcut on Lock…";
+"enter_shortcut_name" = "Enter Shortcut Name";
+"select_shortcut_name" = "Select Shortcut to Run";
+"enter_shortcut_name_info" = "This shortcut will be run when BLELock locks your Mac.";
+"shortcut_none" = "Do not run";
+"shortcut_input_reason" = "Reason";
 "timeout" = "No-Signal Timeout";
 "unlock_rssi" = "Unlock RSSI";
 "use_screensaver_to_lock" = "Use Screensaver";

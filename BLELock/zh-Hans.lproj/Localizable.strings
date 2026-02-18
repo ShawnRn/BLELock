@@ -5,6 +5,7 @@
 "closer" = "更近";
 "device" = "设备";
 "device_not_set" = "未选择设备";
+"device_count" = "已选择 %ld 台设备";
 "disabled" = "禁用";
 "enter_rssi_threshold" = "输入最小信号强度 (RSSI)";
 "enter_rssi_threshold_info" = "忽略信号强度低于此值的设备。";
@@ -19,7 +20,7 @@
 "minutes" = "分钟";
 "not_detected" = "未检测到信号";
 "notification_device_away" = "设备已远离";
-"notification_locked" = "「%@」已由 BLELock 锁定";
+"notification_locked" = "「%@」已由「%@」锁定。";
 "locking_in_seconds" = "将在 %d 秒后锁定屏幕";
 "notification_lost_signal" = "信号丢失";
 "notification_update_available" = "发现新版本";
@@ -31,6 +32,12 @@
 "seconds" = "秒";
 "set_rssi_threshold" = "设置最小信号强度...";
 "sleep_display" = "锁定时休眠显示器";
+"run_shortcut_on_lock" = "锁屏时运行快捷指令…";
+"enter_shortcut_name" = "输入快捷指令名称";
+"select_shortcut_name" = "选择要运行的快捷指令";
+"enter_shortcut_name_info" = "锁屏时将通过快捷指令运行该名称的指令。";
+"shortcut_none" = "不运行";
+"shortcut_input_reason" = "原因";
 "timeout" = "信号丢失超时";
 "use_screensaver_to_lock" = "使用屏幕保护程序";
 "wake_on_proximity" = "靠近时唤醒屏幕";

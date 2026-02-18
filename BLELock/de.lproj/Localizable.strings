@@ -18,7 +18,7 @@
 "minutes" = "Minuten";
 "not_detected" = "Kein Signal entdeckt";
 "notification_device_away" = "Gerät ist entfernt";
-"notification_locked" = "%@ wurde durch BLELock gesperrt";
+"notification_locked" = "„%@“ wurde von %@ gesperrt.";
 "notification_lost_signal" = "Signal ging verloren";
 "notification_update_available" = "Update verfügbar";
 "ok" = "OK";
@@ -32,6 +32,12 @@
 "set_password" = "Passwort setzen…";
 "set_rssi_threshold" = "Setze Minimum RSSI…";
 "sleep_display" = "Bildschirm beim Sperren ausschalten";
+"run_shortcut_on_lock" = "Shortcut beim Sperren ausführen…";
+"enter_shortcut_name" = "Shortcut-Namen eingeben";
+"select_shortcut_name" = "Shortcut zum Ausführen wählen";
+"enter_shortcut_name_info" = "Dieser Shortcut wird ausgeführt, wenn BLELock den Mac sperrt.";
+"shortcut_none" = "Nicht ausführen";
+"shortcut_input_reason" = "Grund";
 "timeout" = "Kein-Signal Zeitablauf";
 "unlock_rssi" = "RSSI entsperren";
 "use_screensaver_to_lock" = "Den Bildschirmschoner verwenden zum Sperren";
