@@ -23,6 +23,8 @@
 "notification_update_available" = "Opdatering er tilgængelig.";
 "ok" = "OK";
 "passive_mode" = "Passiv tilstand";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "Din adgangskode vil blive gemt sikkert i nøglering.";
 "password_not_set" = "Der er ikke indstillet et kodeord.";
 "pause_now_playing" = "Pause \"Afspilning nu\", mens den er låst";

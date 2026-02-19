@@ -23,6 +23,8 @@
 "notification_update_available" = "アップデートが利用可能です";
 "ok" = "OK";
 "passive_mode" = "パッシブモード";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "パスワードはキーチェーンに安全に保存されます。";
 "password_not_set" = "パスワードが設定されていません。";
 "pause_now_playing" = "ロック中 \"再生中\" を一時停止";

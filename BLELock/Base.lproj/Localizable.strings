@@ -27,6 +27,8 @@
 "notification_update_available" = "Update is available.";
 "ok" = "OK";
 "passive_mode" = "Passive Mode";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "Your password will be securely stored in Keychain.";
 "password_not_set" = "Password is not set.";
 "pause_now_playing" = "Pause “Now Playing” while Locked";

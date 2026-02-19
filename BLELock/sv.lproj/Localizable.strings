@@ -23,6 +23,8 @@
 "notification_update_available" = "En updatering finns tillgänglig.";
 "ok" = "OK";
 "passive_mode" = "Passivt läge";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "Ditt lösenord lagras säkert i nyckelringen.";
 "password_not_set" = "Inget lösenordet har angetts.";
 "pause_now_playing" = "Pausa \"Spela nu\" när låst";

@@ -23,6 +23,8 @@
 "notification_update_available" = "Update verfügbar";
 "ok" = "OK";
 "passive_mode" = "Passiver Modus";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "Das Passwort wurde sicher am Schlüsselbund gespeichert.";
 "password_not_set" = "Kein Passwort gesetzt.";
 "pause_now_playing" = "Pause \"Spielt jetzt\" während der Sperre";

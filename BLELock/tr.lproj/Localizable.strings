@@ -23,6 +23,8 @@
 "notification_update_available" = "Güncelleme var";
 "ok" = "TAMAM";
 "passive_mode" = "Passif Mod";
+"paused" = "Paused";
+"pause_on_battery" = "Pause While on Battery";
 "password_info" = "Şifreniz güvenli bir şekilde anahtar zincirinde saklanacaktır.";
 "password_not_set" = "Şifre belirlenmedi.";
 "pause_now_playing" = "Kilitliyken \"Now Playing\" beklet";
