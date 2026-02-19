@@ -4,10 +4,19 @@ import ServiceManagement
 import UserNotifications
 import IOKit.pwr_mgt
 import IOKit
+import IOKit.ps
 import LocalAuthentication
 
 func t(_ key: String) -> String {
     return NSLocalizedString(key, comment: "")
+}
+
+private func powerSourceChangedCallback(_ context: UnsafeMutableRawPointer?) {
+    guard let context = context else { return }
+    let appDelegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+    Task { @MainActor in
+        appDelegate.applyPauseOnBatteryPolicy()
+    }
 }
 
 @NSApplicationMain
@@ -40,6 +49,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     var lastHeaderUpdate: TimeInterval = 0
     var lastDisplayedRSSI: [UUID: Int?] = [:]
     var shortcutName: String?
+    var powerSourceRunLoopSource: CFRunLoopSource?
+    var activityToken: NSObjectProtocol?
 
     func menuWillOpen(_ menu: NSMenu) {
         if menu == deviceMenu {
@@ -101,6 +112,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             monitorMenuItem?.attributedTitle = nil
             monitorMenuItem?.title = t("device_not_set")
             monitorDetailMenu.removeAllItems()
+        } else if ble.suspended {
+            monitorMenuItem?.attributedTitle = nil
+            monitorMenuItem?.title = t("paused")
         } else {
             monitorMenuItem?.attributedTitle = nil
             monitorMenuItem?.title = String(format: t("device_count"), ble.monitoredUUIDs.count)
@@ -108,18 +122,51 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     }
 
     func updateMonitorDetailList() {
-        monitorDetailMenu.removeAllItems()
-        guard !ble.monitoredUUIDs.isEmpty else { return }
-        for id in ble.monitoredUUIDs {
+        let ids = ble.monitoredUUIDs.sorted { lhs, rhs in
+            let lName = deviceNameMap[lhs] ?? lhs.uuidString
+            let rName = deviceNameMap[rhs] ?? rhs.uuidString
+            if lName == rName { return lhs.uuidString < rhs.uuidString }
+            return lName.localizedCaseInsensitiveCompare(rName) == .orderedAscending
+        }
+        guard !ids.isEmpty else {
+            monitorDetailMenu.removeAllItems()
+            return
+        }
+
+        if monitorDetailMenu.items.count != ids.count {
+            monitorDetailMenu.removeAllItems()
+            for _ in ids {
+                let item = monitorDetailMenu.addItem(withTitle: "", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+            }
+        }
+
+        for (index, id) in ids.enumerated() {
             let name = deviceNameMap[id] ?? String(id.uuidString.prefix(8)) + "…"
             let title: String
-            if let val = rssiMap[id] ?? nil {
+            if !ble.suspended, let val = rssiMap[id] ?? nil {
                 title = "\(name) \(val)dBm"
             } else {
                 title = "\(name) --"
             }
-            monitorDetailMenu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+            let item = monitorDetailMenu.items[index]
+            if item.title != title {
+                item.title = title
+            }
+            if item.isEnabled {
+                item.isEnabled = false
+            }
         }
+    }
+
+    func refreshStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let hasSelectedDevice = !ble.monitoredUUIDs.isEmpty
+        let isPaused = ble.suspended
+        let hasSeenSelectedDevice = ble.monitoredUUIDs.contains { ble.seenDevices.contains($0) }
+        let isConnectedState = hasSelectedDevice && !isPaused && hasSeenSelectedDevice
+        connected = isConnectedState
+        button.image = NSImage(named: isConnectedState ? "StatusBarConnected" : "StatusBarDisconnected")
     }
     
     func newDevice(device: Device) {
@@ -166,6 +213,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             monitorMenuItem?.attributedTitle = nil
             monitorMenuItem?.title = t("device_not_set")
             monitorDetailMenu.removeAllItems()
+        } else if ble.suspended {
+            lastHeaderText = t("paused")
+            monitorMenuItem?.attributedTitle = nil
+            monitorMenuItem?.title = t("paused")
+            updateMonitorDetailList()
         } else {
             let now = Date().timeIntervalSince1970
             let header = String(format: t("device_count"), ble.monitoredUUIDs.count)
@@ -180,18 +232,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
         if let r = rssi {
             lastRSSI = r
-            if (!connected) {
-                connected = true
-                statusItem.button?.image = NSImage(named: "StatusBarConnected")
-            }
-        } else {
-            // if any device unknown, keep connected flag only if at least one rssi exists
-            let anyKnown = rssiMap.values.contains { $0 != nil }
-            if !anyKnown && connected {
-                connected = false
-                statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
-            }
         }
+        refreshStatusIcon()
     }
 
     func bluetoothPowerWarn() {
@@ -429,10 +471,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     }
 
     func monitorDevice(uuids: Set<UUID>) {
-        connected = false
-        statusItem.button?.image = NSImage(named: "StatusBarDisconnected")
         monitorMenuItem?.title = t("not_detected")
         ble.startMonitor(uuids: uuids)
+        refreshStatusIcon()
     }
 
     func errorModal(_ msg: String, info: String? = nil) {
@@ -574,6 +615,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         ble.setPassiveMode(passiveMode)
     }
 
+    @objc func togglePauseOnBattery(_ menuItem: NSMenuItem) {
+        let enabled = !prefs.bool(forKey: "pauseOnBattery")
+        prefs.set(enabled, forKey: "pauseOnBattery")
+        menuItem.state = enabled ? .on : .off
+        applyPauseOnBatteryPolicy()
+    }
+
+    func isRunningOnBattery() -> Bool {
+        let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        if let source = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String? {
+            return source == kIOPSBatteryPowerValue
+        }
+        guard let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return false }
+        for ps in list {
+            guard let desc = IOPSGetPowerSourceDescription(info, ps)?.takeUnretainedValue() as? [String: Any] else { continue }
+            if let state = desc[kIOPSPowerSourceStateKey as String] as? String, state == kIOPSBatteryPowerValue {
+                return true
+            }
+        }
+        return false
+    }
+
+    func setupPowerSourceMonitoring() {
+        guard powerSourceRunLoopSource == nil else { return }
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        guard let source = IOPSNotificationCreateRunLoopSource(powerSourceChangedCallback, context)?.takeRetainedValue() else { return }
+        powerSourceRunLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    }
+
+    func applyPauseOnBatteryPolicy() {
+        let onBattery = isRunningOnBattery()
+        let enabled = prefs.bool(forKey: "pauseOnBattery")
+        let shouldPause = enabled && onBattery
+        print("PauseOnBattery: enabled=\(enabled) onBattery=\(onBattery) suspended=\(shouldPause)")
+        ble.setSuspended(shouldPause)
+        updateMonitorMenuTitle()
+        updateMonitorDetailList()
+        refreshStatusIcon()
+    }
+
 
     @objc func toggleShowDockIcon(_ menuItem: NSMenuItem) {
         let show = !prefs.bool(forKey: "showDockIcon")
@@ -657,6 +739,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     func constructMenu() {
         monitorMenuItem = mainMenu.addItem(withTitle: t("device_not_set"), action: nil, keyEquivalent: "")
         monitorMenuItem?.submenu = monitorDetailMenu
+        monitorDetailMenu.autoenablesItems = false
         
         var item: NSMenuItem
 
@@ -725,6 +808,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
         item = mainMenu.addItem(withTitle: t("passive_mode"), action: #selector(togglePassiveMode), keyEquivalent: "")
         item.state = prefs.bool(forKey: "passiveMode") ? .on : .off
+
+        item = mainMenu.addItem(withTitle: t("pause_on_battery"), action: #selector(togglePauseOnBattery), keyEquivalent: "")
+        item.state = prefs.bool(forKey: "pauseOnBattery") ? .on : .off
         
         item = mainMenu.addItem(withTitle: t("launch_at_login"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         item.state = prefs.bool(forKey: "launchAtLogin") ? .on : .off
@@ -778,6 +864,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         ble.startScanning()
         monitorDevice(uuids: initialUUIDs)
         updateMonitorDetailList()
+        refreshStatusIcon()
         let lockRSSI = prefs.integer(forKey: "lockRSSI")
         if lockRSSI != 0 {
             ble.lockRSSI = lockRSSI
@@ -786,6 +873,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             ble.signalTimeout = Double(prefs.integer(forKey: "timeout"))
         }
         ble.setPassiveMode(prefs.bool(forKey: "passiveMode"))
+        setupPowerSourceMonitoring()
+        applyPauseOnBatteryPolicy()
         if let sc = prefs.string(forKey: "shortcutName") {
             shortcutName = sc
         }
@@ -821,6 +910,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
         checkUpdate()
 
+        // 禁用 App Nap：确保 BLE 扫描回调和 Timer 在后台不被系统节能机制暂停
+        ProcessInfo.processInfo.disableAutomaticTermination("BLE monitoring active")
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "BLE device monitoring requires timely timer firing"
+        )
+
         // Hide dock icon.
         // This is required because we can't have LSUIElement set to true in Info.plist,
         // otherwise CBCentralManager.scanForPeripherals won't work.
@@ -832,6 +928,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
+        if let source = powerSourceRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            powerSourceRunLoopSource = nil
+        }
     }
 }
 

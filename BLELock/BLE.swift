@@ -152,11 +152,68 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var connectionTimers : [UUID: Timer] = [:]
     var lastReadAtMap: [UUID: Double] = [:]
     var seenDevices: Set<UUID> = []
+    var noConnectUUIDs: Set<UUID> = []
+    var suspended = false
+    var lastConnectAttemptAt: [UUID: Double] = [:]
+    var connectCooldownUntil: [UUID: Double] = [:]
+    var watchdogTimer: Timer?
+
+    func shouldAllowDuplicateAdvertisements() -> Bool {
+        return scanMode || passiveMode || !noConnectUUIDs.isEmpty
+    }
+
+    func markAsNoConnect(uuid: UUID, reason: String) {
+        if noConnectUUIDs.insert(uuid).inserted {
+            print("Disable active connect for \(uuid): \(reason)")
+            restartScanningIfNeeded()
+        }
+        connectCooldownUntil[uuid] = Date().timeIntervalSince1970 + 300
+        if let timer = activeModeTimers[uuid] {
+            timer.invalidate()
+            activeModeTimers.removeValue(forKey: uuid)
+        }
+        if let timer = connectionTimers[uuid] {
+            timer.invalidate()
+            connectionTimers.removeValue(forKey: uuid)
+        }
+    }
+
+    func restartScanningIfNeeded() {
+        guard centralMgr.state == .poweredOn else { return }
+        if centralMgr.isScanning {
+            centralMgr.stopScan()
+        }
+        let allowDuplicates = shouldAllowDuplicateAdvertisements()
+        centralMgr.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates])
+    }
+
+    func shouldAvoidConnecting(peripheral: CBPeripheral, advertisementData: [String: Any]) -> Bool {
+        if let mfgData = advertisementData["kCBAdvDataManufacturerData"] as? Data, mfgData.count >= 2 {
+            let b0 = mfgData[mfgData.startIndex]
+            let b1 = mfgData[mfgData.startIndex + 1]
+            // Apple company identifier: 0x004C (little-endian in advertisement payload)
+            if (b0 == 0x4c && b1 == 0x00) || (b0 == 0x00 && b1 == 0x4c) {
+                return true
+            }
+        }
+        let candidateNames: [String] = [
+            peripheral.name,
+            advertisementData["kCBAdvDataLocalName"] as? String
+        ].compactMap { $0 }
+        for name in candidateNames {
+            let normalized = name.lowercased()
+            if normalized.contains("iphone") || normalized.contains("ipad") {
+                return true
+            }
+        }
+        return false
+    }
 
     func scanForPeripherals() {
+        guard !suspended else { return }
         guard centralMgr.state == .poweredOn else { return }
         guard !centralMgr.isScanning else { return }
-        let allowDuplicates = scanMode || passiveMode
+        let allowDuplicates = shouldAllowDuplicateAdvertisements()
         centralMgr.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates])
     }
 
@@ -167,7 +224,38 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func stopScanning() {
         scanMode = false
-        centralMgr.stopScan()
+        if !monitoredUUIDs.isEmpty && !suspended {
+            // 仅关闭扫描模式，但保持监控扫描运行
+            restartScanningIfNeeded()
+        } else {
+            centralMgr.stopScan()
+        }
+    }
+
+    func setSuspended(_ value: Bool) {
+        guard suspended != value else { return }
+        suspended = value
+        if suspended {
+            centralMgr.stopScan()
+            watchdogTimer?.invalidate()
+            watchdogTimer = nil
+            for timer in proximityTimers.values { timer.invalidate() }
+            for timer in signalTimers.values { timer.invalidate() }
+            for timer in activeModeTimers.values { timer.invalidate() }
+            for timer in connectionTimers.values { timer.invalidate() }
+            proximityTimers.removeAll()
+            signalTimers.removeAll()
+            activeModeTimers.removeAll()
+            connectionTimers.removeAll()
+            for (_, p) in monitoredPeripherals { centralMgr.cancelPeripheralConnection(p) }
+            delegate?.cancelCountdown(reason: "lost")
+        } else {
+            scanForPeripherals()
+            startWatchdog()
+            if !monitoredUUIDs.isEmpty {
+                startMonitor(uuids: monitoredUUIDs)
+            }
+        }
     }
 
     func setPassiveMode(_ mode: Bool) {
@@ -186,7 +274,7 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 presenceMap[uuid] = true
             }
         }
-        scanForPeripherals()
+        restartScanningIfNeeded()
     }
 
     func startMonitor(uuids: Set<UUID>) {
@@ -207,9 +295,13 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             presenceMap.removeValue(forKey: uuid)
             latestRSSIs.removeValue(forKey: uuid)
             lastReadAtMap.removeValue(forKey: uuid)
+            noConnectUUIDs.remove(uuid)
+            lastConnectAttemptAt.removeValue(forKey: uuid)
+            connectCooldownUntil.removeValue(forKey: uuid)
         }
 
         monitoredUUIDs = uuids
+        noConnectUUIDs = noConnectUUIDs.intersection(uuids)
 
         // Initialize state for newly added devices
         for uuid in monitoredUUIDs {
@@ -217,7 +309,7 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             seenDevices.remove(uuid)
         }
 
-        scanForPeripherals()
+        restartScanningIfNeeded()
     }
 
     func resetSignalTimer(uuid: UUID) {
@@ -251,6 +343,9 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             switch central.state {
             case .poweredOn:
                 print("Bluetooth powered on")
+                if suspended {
+                    break
+                }
                 scanForPeripherals()
                 if !monitoredUUIDs.isEmpty {
                     startMonitor(uuids: monitoredUUIDs)
@@ -389,9 +484,19 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func connectMonitoredPeripheral(uuid: UUID) {
         guard !passiveMode else { return }
+        guard !suspended else { return }
+        guard !noConnectUUIDs.contains(uuid) else { return }
         guard let p = monitoredPeripherals[uuid] else { return }
+        let now = Date().timeIntervalSince1970
+        if let cooldown = connectCooldownUntil[uuid], now < cooldown {
+            return
+        }
+        if let lastAttempt = lastConnectAttemptAt[uuid], now < lastAttempt + 6 {
+            return
+        }
 
         guard p.state == .disconnected && centralMgr.state == .poweredOn else { return }
+        lastConnectAttemptAt[uuid] = now
         print("Connecting \(uuid)")
         centralMgr.connect(p, options: nil)
         connectionTimers[uuid]?.invalidate()
@@ -418,13 +523,23 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                         rssi RSSI: NSNumber)
     {
         MainActor.assumeIsolated {
+            guard !suspended else { return }
             let rssi = RSSI.intValue > 0 ? 0 : RSSI.intValue
             if monitoredUUIDs.contains(peripheral.identifier) {
-                monitoredPeripherals[peripheral.identifier] = peripheral
-                if activeModeTimers[peripheral.identifier] == nil {
-                    updateMonitoredPeripheral(uuid: peripheral.identifier, rssi: rssi)
+                let uuid = peripheral.identifier
+                monitoredPeripherals[uuid] = peripheral
+
+                let avoidConnect = shouldAvoidConnecting(peripheral: peripheral, advertisementData: advertisementData)
+                if avoidConnect {
+                    markAsNoConnect(uuid: uuid, reason: "iPhone/iPad")
+                } else if noConnectUUIDs.remove(uuid) != nil {
+                    restartScanningIfNeeded()
+                }
+
+                if activeModeTimers[uuid] == nil {
+                    updateMonitoredPeripheral(uuid: uuid, rssi: rssi)
                     if !passiveMode {
-                        connectMonitoredPeripheral(uuid: peripheral.identifier)
+                        connectMonitoredPeripheral(uuid: uuid)
                     }
                 }
             }
@@ -450,7 +565,6 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                             device.localName = lName
                         }
                         devices[peripheral.identifier] = device
-                        central.connect(peripheral, options: nil)
                         delegate?.newDevice(device: device)
                     }
                 } else {
@@ -478,8 +592,34 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                     print("Connected \(peripheral.identifier)")
                     connectionTimers[peripheral.identifier]?.invalidate()
                     connectionTimers[peripheral.identifier] = nil
+                    connectCooldownUntil[peripheral.identifier] = Date().timeIntervalSince1970 + 4
                     peripheral.readRSSI()
                 }
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                        didFailToConnect peripheral: CBPeripheral,
+                        error: Error?)
+    {
+        MainActor.assumeIsolated {
+            guard monitoredUUIDs.contains(peripheral.identifier) else { return }
+            print("Failed to connect \(peripheral.identifier): \(error?.localizedDescription ?? "unknown")")
+            markAsNoConnect(uuid: peripheral.identifier, reason: "connect-failed")
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                        didDisconnectPeripheral peripheral: CBPeripheral,
+                        error: Error?)
+    {
+        MainActor.assumeIsolated {
+            guard monitoredUUIDs.contains(peripheral.identifier) else { return }
+            if error != nil {
+                markAsNoConnect(uuid: peripheral.identifier, reason: "disconnect-error")
+            } else {
+                connectCooldownUntil[peripheral.identifier] = Date().timeIntervalSince1970 + 8
             }
         }
     }
@@ -588,8 +728,36 @@ class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
     //MARK:CBPeripheralDelegate end -
 
+    // MARK: - Watchdog
+
+    func startWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true, block: { [weak self] _ in
+            guard let self = self else { return }
+            MainActor.assumeIsolated {
+                self.watchdogCheck()
+            }
+        })
+        if let timer = watchdogTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    func watchdogCheck() {
+        guard !suspended else { return }
+        guard centralMgr.state == .poweredOn else { return }
+        guard !monitoredUUIDs.isEmpty else { return }
+
+        if !centralMgr.isScanning {
+            print("[Watchdog] Scan not running, restarting...")
+            let allowDuplicates = shouldAllowDuplicateAdvertisements()
+            centralMgr.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates])
+        }
+    }
+
     override init() {
         super.init()
         centralMgr = CBCentralManager(delegate: self, queue: nil)
+        startWatchdog()
     }
 }
